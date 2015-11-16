@@ -31,19 +31,19 @@
     },
     "VPC": {
       "Description": "The name of the VPC in which the server should use",
-      "Type": "String",
+      "Type" : "AWS::EC2::Subnet::Id",
       "MinLength": "1",
       "MaxLength": "128"
     },
     "NetworkID": {
-      "Type": "String",
+      "Type" : "AWS::EC2::Subnet::Id",
       "MinLength": "4",
       "MaxLength": "50",
       "Description": "The Subnet ID to be used by the web instances (must be a private network)."
     },
     "KeyName": {
       "Description": "KeyPair for SSH access to the instances. It must exist.",
-      "Type": "String"
+      "Type" : "AWS::EC2::KeyPair::KeyName"
     },
     "Environment": {
       "Description": "The name of the environment for this stack",
@@ -52,9 +52,10 @@
       "AllowedValues": [
         "production",
         "staging",
-        "development"
+        "development",
+        "test"
       ],
-      "ConstraintDescription": "must be one of production, staging or development"
+      "ConstraintDescription": "must be one of production, staging, test, or development"
     },
     "S3Bucket": {
       "Description": "An S3 Bucket containing private files",
