@@ -1,0 +1,237 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "Add a bastion host to an existing VPC. VPC must have an internet gateway already. **WARNING** This template creates an Amazon EC2 instance. You will be billed for the AWS resources used if you create a stack from this template.",
+
+  "Parameters" : {
+    "KeyName" : {
+      "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type" : "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern" : "[-_ a-zA-Z0-9]*",
+      "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
+    },
+
+    "BastionKeyName" : {
+      "Description" : "Name of the EC2 KeyPair we will create internally to access instances in our VPC",
+      "Type" : "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern" : "[-_ a-zA-Z0-9]*",
+      "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
+    },
+
+    "VpcId" : {
+      "Type" : "String",
+      "Description" : "VpcId of your existing Virtual Private Cloud (VPC)"
+    },
+
+    "SubnetId" : {
+      "Type" : "String",
+      "Description" : "SubnetId of an existing Public facing subnet in your Virtual Private Cloud (VPC)"
+    }
+  },
+
+  "Mappings" : {
+    "AWSInstanceType2Virt": {
+      "t2.micro": {"Virt": "HVM"},
+      "t2.small": {"Virt": "HVM"},
+      "t2.medium": {"Virt": "HVM"},
+      "m3.medium": {"Virt": "HVM"},
+      "m3.large": {"Virt": "HVM"},
+      "m3.xlarge": {"Virt": "HVM"},
+      "m3.2xlarge": {"Virt": "HVM"}
+    },
+
+    "AWSRegionVirt2AMI": {
+      "us-east-1": {
+        "PVM": "ami-50842d38",
+        "HVM": "ami-08842d60"
+      },
+      "us-west-2": {
+        "PVM": "ami-af86c69f",
+        "HVM": "ami-8786c6b7"
+      },
+      "us-west-1": {
+        "PVM": "ami-c7a8a182",
+        "HVM": "ami-cfa8a18a"
+      },
+      "eu-west-1": {
+        "PVM": "ami-9c7ad8eb",
+        "HVM": "ami-6e7bd919"
+      },
+      "ap-northeast-1": {
+        "HVM": "ami-35072834"
+      }
+    }
+  },
+
+  "Resources" : {
+    "CfnUser": {
+      "Type": "AWS::IAM::User",
+      "Properties": {
+        "Path": "/",
+          "Policies": [
+          {
+            "PolicyName": "root",
+            "PolicyDocument": {
+              "Statement": [
+              {
+                "Effect" : "Allow",
+                "Action": [
+                  "ec2:CreateKeyPair",
+                  "ec2:DescribeKeyPairs",
+                  "ec2:DescribeRegions",
+                  "ec2:ImportKeyPair"
+                ],
+                "Resource" : "*"
+              },
+              {
+                "Effect": "Allow",
+                "Action": "cloudformation:DescribeStackResource",
+                "Resource": "*"
+              }]
+            }
+          }
+        ]
+      }
+    },
+    "CfnKeys": {
+      "Type": "AWS::IAM::AccessKey",
+      "Properties": {
+        "UserName": {
+          "Ref": "CfnUser"
+        }
+      }
+    },
+
+    "IPAddress" : {
+      "Type" : "AWS::EC2::EIP",
+      "Properties" : {
+        "Domain" : "vpc",
+        "InstanceId" : { "Ref" : "BastionHost" }
+      }
+    },
+
+    "BastionSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "VpcId" : { "Ref" : "VpcId" },
+        "GroupDescription" : "Enable SSH access via port 22",
+        "SecurityGroupIngress" : [ { "IpProtocol" : "tcp", "FromPort" : "22", "ToPort" : "22", "CidrIp" : "0.0.0.0/0" } ]
+      }
+    },
+
+    "BastionHost" : {
+      "Type" : "AWS::EC2::Instance",
+      "Metadata": {
+        "AWS::CloudFormation::Init": {
+            "config": {
+              "packages": {
+                "yum": {
+                  "python-boto": []
+                }
+              },
+              "files": {
+               "/home/ec2-user/create-keypair" : {
+                "content" : {
+                  "Fn::Join" : ["", ["#!/usr/bin/python\n",
+                   "import string\n",
+                   "import random\n",
+                   "import boto.ec2\n",
+                   "kp_name = '",{ "Ref" : "BastionKeyName" },"'\n",
+                   "ec2 = boto.ec2.connect_to_region('", {"Ref" : "AWS::Region" }, "')\n",
+                   "keypair = ec2.create_key_pair(kp_name)\n",
+                   "keypair.save('/home/ec2-user/.ssh/')\n",
+                   "print 'Created keypair: %s' % kp_name\n"]]
+                },
+              "mode" : "000750",
+              "owner" : "ec2-user",
+              "group" : "ec2-user"
+              },
+              "/home/ec2-user/.boto": {
+                "content": {
+                  "Fn::Join": ["", [ "[Credentials]\n",
+                    "aws_access_key_id = ", { "Ref": "CfnKeys" }, "\n",
+                    "aws_secret_access_key = ", { "Fn::GetAtt": ["CfnKeys", "SecretAccessKey"] }, "\n",
+                    "[Boto]\n",
+                    "ec2_region_name = ", { "Ref" : "AWS::Region" }, "\n",
+                    "ec2_region_endpoint = ec2.", { "Ref" : "AWS::Region" }, ".amazonaws.com\n"]]
+                },
+                "mode": "000600",
+                "owner": "ec2-user",
+                "group": "ec2-user"
+              }
+            },
+            "commands" : {
+              "00create-keypair" : {
+                "command" : ["su", "ec2-user", "-c", "python create-keypair"],
+                "cwd" : "/home/ec2-user"
+              }
+            }
+          }
+        }
+      },
+      "Properties" : {
+        "InstanceType" : "t2.medium",
+        "ImageId" : { "Fn::FindInMap" : [ "AWSRegionVirt2AMI", { "Ref" : "AWS::Region" }, {"Fn::FindInMap": ["AWSInstanceType2Virt", "t2.medium", "Virt"]} ]},
+        "SecurityGroupIds" : [{ "Ref" : "BastionSecurityGroup" }],
+        "SubnetId" : { "Ref" : "SubnetId" },
+        "KeyName" : { "Ref" : "KeyName" },
+        "UserData": {
+          "Fn::Base64" : { "Fn::Join" : ["", [
+                "#!/bin/bash -v\n",
+                "yum update -y aws-cfn-bootstrap\n",
+
+                "# Helper function\n",
+                "function error_exit\n",
+                "{\n",
+                "  /opt/aws/bin/cfn-signal -e 1 -r \"$1\" '", { "Ref" : "BastionHostHandle" }, "'\n",
+                "  exit 1\n",
+                "}\n",
+
+                "/opt/aws/bin/cfn-init -s ", { "Ref" : "AWS::StackName" }, " -r BastionHost ",
+                "    --access-key ",  { "Ref" : "CfnKeys" },
+                "    --secret-key ", {"Fn::GetAtt": ["CfnKeys", "SecretAccessKey"]},
+                "    --region ", { "Ref" : "AWS::Region" }, " || error_exit 'Failed to run cfn-init'\n",
+
+                "# All is well so signal success\n",
+                "/opt/aws/bin/cfn-signal -e 0 -r \"Server setup complete\" '", { "Ref" : "BastionHostHandle" }, "'\n"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "BastionHostHandle" : {
+      "Type" : "AWS::CloudFormation::WaitConditionHandle"
+    },
+    "ControllerCondition" : {
+      "Type" : "AWS::CloudFormation::WaitCondition",
+      "DependsOn" : "BastionHost",
+      "Properties" : {
+        "Handle" : { "Ref" : "BastionHostHandle" },
+        "Timeout" : "900"
+      }
+    }
+  },
+
+  "Outputs" : {
+
+    "InstanceID" : {
+      "Value" : {"Ref": "BastionHost"},
+      "Description" : "Bastion Instance ID"
+    },
+
+    "IPAddress" : {
+      "Value" : { "Ref" : "IPAddress" },
+      "Description" : "Public IP address of instance"
+    },
+
+    "BastionKeyName" : {
+      "Value" : { "Ref" : "BastionKeyName" },
+      "Description" : "The internal bastion KeyPair name"
+    }
+  }
+}
