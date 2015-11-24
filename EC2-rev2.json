@@ -1,0 +1,496 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "This template creates a Web instance in a private subnet inside a VPC. The Web EC2 instance is not assigned an Elastic IP address and relies on an ELB and a Proxy to communicate with the external world.",
+  "Parameters": {
+    "InstanceType": {
+      "Description": "Web Server EC2 instance type",
+      "Type": "String",
+      "Default": "m1.small",
+      "AllowedValues": [
+        "t1.micro",
+        "m1.small",
+        "m1.medium",
+        "m1.large",
+        "m1.xlarge",
+        "m2.xlarge",
+        "m2.2xlarge",
+        "m2.4xlarge",
+        "c1.medium",
+        "c1.xlarge",
+        "cc1.4xlarge",
+        "cc2.8xlarge",
+        "cg1.4xlarge"
+      ],
+      "ConstraintDescription": "must be a valid EC2 instance type. running a t1.micro inside a VPC is unsupported by AWS at the moment!"
+    },
+    "StackName": {
+      "Description": "The name of the stack",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "128"
+    },
+    "VPC": {
+      "Description": "The name of the VPC in which the server should use",
+      "Type" : "AWS::EC2::Subnet::Id",
+      "MinLength": "1",
+      "MaxLength": "128"
+    },
+    "NetworkID": {
+      "Type" : "AWS::EC2::Subnet::Id",
+      "MinLength": "4",
+      "MaxLength": "50",
+      "Description": "The Subnet ID to be used by the web instances (must be a private network)."
+    },
+    "KeyName": {
+      "Description": "KeyPair for SSH access to the instances. It must exist.",
+      "Type" : "AWS::EC2::KeyPair::KeyName"
+    },
+    "Environment": {
+      "Description": "The name of the environment for this stack",
+      "Type": "String",
+      "Default": "production",
+      "AllowedValues": [
+        "production",
+        "staging",
+        "development",
+        "test"
+      ],
+      "ConstraintDescription": "must be one of production, staging, test, or development"
+    },
+    "S3Bucket": {
+      "Description": "An S3 Bucket containing private files",
+      "Type": "String",
+      "Default": "EC2_App_deploy-private"
+    }
+  },
+  "Mappings": {
+    "RegionArch2AMI": {
+      "us-east-1": {
+        "32": "ami-9d7c13fd",
+        "64": "ami-9d7c13fd"
+      },
+      "us-west-1": {
+        "32": "ami-9d7c13fd",
+        "64": "ami-9d7c13fd"
+      },
+      "us-west-2": {
+        "32": "ami-9d7c13fd",
+        "64": "ami-9d7c13fd"
+      },
+      "eu-west-1": {
+        "32": "ami-9d7c13fd",
+        "64": "ami-9d7c13fd"
+      }
+    },
+    "InstanceType2Arch": {
+      "t1.micro": {
+        "Arch": "32"
+      },
+      "m1.small": {
+        "Arch": "32"
+      },
+      "m1.medium": {
+        "Arch": "64"
+      },
+      "m1.large": {
+        "Arch": "64"
+      },
+      "m1.xlarge": {
+        "Arch": "64"
+      },
+      "m2.xlarge": {
+        "Arch": "64"
+      },
+      "m2.2xlarge": {
+        "Arch": "64"
+      },
+      "m2.4xlarge": {
+        "Arch": "64"
+      },
+      "c1.medium": {
+        "Arch": "64"
+      },
+      "c1.xlarge": {
+        "Arch": "64"
+      }
+    }
+  },
+  "Resources": {
+    "IAMUser": {
+      "Type": "AWS::IAM::User",
+      "Properties": {
+        "Path": "/servers/content/web/"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "cbee7fc2-9420-4941-bcbe-dfe8c1898af4"
+        }
+      }
+    },
+    "AWSAccessKey": {
+      "Type": "AWS::IAM::AccessKey",
+      "Properties": {
+        "UserName": {
+          "Ref": "IAMUser"
+        }
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "8b9cc15e-3f60-4b08-9075-23c8a472de15"
+        }
+      }
+    },
+    "WebInstancesGroup": {
+      "Type": "AWS::IAM::Group",
+      "Properties": {
+        "Path": "/servers/content/web/"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "8d23d2a4-3d41-4e31-a666-08bd171194c8"
+        }
+      }
+    },
+    "AddWebInstancesGroup": {
+      "Type": "AWS::IAM::UserToGroupAddition",
+      "Properties": {
+        "GroupName": {
+          "Ref": "WebInstancesGroup"
+        },
+        "Users": [
+          {
+            "Ref": "IAMUser"
+          }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "48f1c4da-cab5-400a-9fdb-ba7dca2d1cb1"
+        }
+      }
+    },
+    "SecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "GroupDescription": "Enable secure access to the Web",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "80",
+            "ToPort": "80",
+            "CidrIp": {
+              "Ref": "VPC"
+            }
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "443",
+            "ToPort": "443",
+            "CidrIp": {
+              "Ref": "VPC"
+            }
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": {
+              "Ref": "VPC"
+            }
+          }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "b128e7bc-9918-4bf2-9120-355d54e42551"
+        }
+      }
+    },
+    "WebInstance": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "ImageId": {
+          "Fn::FindInMap": [
+            "RegionArch2AMI",
+            {
+              "Ref": "AWS::Region"
+            },
+            {
+              "Fn::FindInMap": [
+                "InstanceType2Arch",
+                {
+                  "Ref": "InstanceType"
+                },
+                "Arch"
+              ]
+            }
+          ]
+        },
+        "SecurityGroupIds": [
+          {
+            "Ref": "SecurityGroup"
+          }
+        ],
+        "SubnetId": {
+          "Ref": "NetworkID"
+        },
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": {
+              "Ref": "StackName"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Key": "ServerRole",
+            "Value": "Web"
+          },
+          {
+            "Key": "Network",
+            "Value": "Private"
+          }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "00b8972c-7512-4400-bc30-82d8e21fad4c"
+        }
+      }
+    },
+   
+    "WaitHandle": {
+      "Type": "AWS::CloudFormation::WaitConditionHandle",
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "22d6f522-2c6d-4770-8734-990927577b20"
+        }
+      }
+    },
+    "WaitCondition": {
+      "Type": "AWS::CloudFormation::WaitCondition",
+      "DependsOn": "WebInstance",
+      "Properties": {
+        "Handle": {
+          "Ref": "WaitHandle"
+        },
+        "Timeout": "1200",
+        "Count": "3"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "8bdb2732-35b7-4797-89d4-400c798691f5"
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "WaitHandle": {
+      "Value": {
+        "Ref": "WaitHandle"
+      },
+      "Description": "The  wait handle for the Web server."
+    },
+    "SecurityGroup": {
+      "Value": {
+        "Ref": "SecurityGroup"
+      },
+      "Description": "The SG of the Web server."
+    },
+    "InstanceID": {
+      "Value": {
+        "Ref": "WebInstance"
+      },
+      "Description": "The Instance name/ID of the Web server."
+    },
+    "ServerIP": {
+      "Value": {
+        "Fn::GetAtt": [
+          "WebInstance",
+          "PrivateIp"
+        ]
+      },
+      "Description": "The IP address of the Web server."
+    }
+  },
+  "Metadata": {
+    "AWS::CloudFormation::Designer": {
+      "22d6f522-2c6d-4770-8734-990927577b20": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 60,
+          "y": 90
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "b128e7bc-9918-4bf2-9120-355d54e42551": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 180,
+          "y": 90
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "8d23d2a4-3d41-4e31-a666-08bd171194c8": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 60,
+          "y": 210
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "cbee7fc2-9420-4941-bcbe-dfe8c1898af4": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 180,
+          "y": 210
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "48f1c4da-cab5-400a-9fdb-ba7dca2d1cb1": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 300,
+          "y": 90
+        },
+        "z": 1,
+        "embeds": [],
+        "references": [
+          "8d23d2a4-3d41-4e31-a666-08bd171194c8",
+          "cbee7fc2-9420-4941-bcbe-dfe8c1898af4"
+        ]
+      },
+      "8b9cc15e-3f60-4b08-9075-23c8a472de15": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 300,
+          "y": 210
+        },
+        "z": 1,
+        "embeds": [],
+        "isrelatedto": [
+          "cbee7fc2-9420-4941-bcbe-dfe8c1898af4"
+        ]
+      },
+      "00b8972c-7512-4400-bc30-82d8e21fad4c": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 60,
+          "y": 330
+        },
+        "z": 1,
+        "embeds": [],
+        "ismemberof": [
+          "b128e7bc-9918-4bf2-9120-355d54e42551"
+        ],
+        "isrelatedto": [
+          "22d6f522-2c6d-4770-8734-990927577b20",
+          "8b9cc15e-3f60-4b08-9075-23c8a472de15"
+        ]
+      },
+      "8bdb2732-35b7-4797-89d4-400c798691f5": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 180,
+          "y": 330
+        },
+        "z": 1,
+        "embeds": [],
+        "references": [
+          "22d6f522-2c6d-4770-8734-990927577b20"
+        ],
+        "dependson": [
+          "00b8972c-7512-4400-bc30-82d8e21fad4c"
+        ]
+      },
+      "42871d49-41a2-47e7-b6f1-45f4afecea4e": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 300,
+          "y": 330
+        },
+        "z": 1,
+        "embeds": [],
+        "isrelatedto": [
+          "00b8972c-7512-4400-bc30-82d8e21fad4c"
+        ]
+      },
+      "900508a4-bbfe-4714-a719-701fecd874b6": {
+        "source": {
+          "id": "00b8972c-7512-4400-bc30-82d8e21fad4c"
+        },
+        "target": {
+          "id": "42871d49-41a2-47e7-b6f1-45f4afecea4e"
+        }
+      },
+      "a7c8e727-b537-4722-8cc2-4a60a4d9941f": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 420,
+          "y": 90
+        },
+        "z": 1,
+        "embeds": [],
+        "isrelatedto": [
+          "00b8972c-7512-4400-bc30-82d8e21fad4c"
+        ]
+      },
+      "3d414993-36b8-4a2a-9b89-8cb095814557": {
+        "source": {
+          "id": "00b8972c-7512-4400-bc30-82d8e21fad4c"
+        },
+        "target": {
+          "id": "a7c8e727-b537-4722-8cc2-4a60a4d9941f"
+        }
+      }
+    }
+  }
+}
